@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 # Copyright 2013 Abram Hindle
+#
+# Modifications by Brandon Hayduk per cmput 410 lectures, slides, and lab materials
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,6 +25,7 @@ import socket
 import re
 # you may use urllib to encode data appropriately
 import urllib
+from urlparse import urlparse
 
 def help():
     print "httpclient.py [GET/POST] [URL]\n"
@@ -35,18 +38,87 @@ class HTTPRequest(object):
 class HTTPClient(object):
     #def get_host_port(self,url):
 
-    def connect(self, host, port):
-        # use sockets!
-        return None
+    def parseURL(self, url):
+        """
+        Method to take a url and use the urlparse method to
+        analyze and store the relevant aspects of the url. 
+       
+        """
+        print "URL: %s" % url
+        self.u = urlparse(url)
 
+        #Get Path 
+        if self.u.path == "":
+            self.path = "/"
+        else:
+            self.path = self.u.path
+
+        
+        #get Query (set parameters - encoded) 
+        if self.u.query:
+         
+            self.parameters = self.u.query.split("&")
+
+            q = ""
+            for param in self.parameters:
+                p = param.split("=")
+                key = urllib.quote_plus(p[0])
+                
+                if q != "":
+                    q = q + "&"
+                q = q + key
+                if len(p) > 1:
+                    value = urllib.quote_plus(p[1])
+                    q = q + "=" + value
+            self.parameters = q
+        
+
+    def connect(self):
+        # Create the socket 
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except socket.error:
+            print('Socket Creation Error:' + str(msg[0]) + '-' + msg[1])
+            sys.exit()
+
+        #Get the hostname and port from the parsed url 
+        self.host = self.u.hostname
+        self.port = self.u.port
+    
+        if self.port == None:
+            self.port = 80
+
+        try:
+            self.remote_ip = socket.gethostbyname(self.host)
+        except socket.gaierror:
+            print('Hostname \'' + host+ '\' could not be resolved')
+            sys.exit()
+        
+        print("host by name is:"+ self.host )
+       # print("port is: " + self.port)
+
+        self.socket.connect((self.remote_ip, self.port))
+        
     def get_code(self, data):
-        return None
+        #validate
+        if not data:
+            return None
 
+        #code first
+        code = int(data.split(' ',2)[1])
+        print("Responded with Code: %d" % code)
+        return code
+     
     def get_headers(self,data):
+        #?
         return None
+        
 
     def get_body(self, data):
-        return None
+        if not data:
+            return None
+
+        return data.split("\r\n\r\n",2)[1]
 
     # read everything from the socket
     def recvall(self, sock):
@@ -60,21 +132,85 @@ class HTTPClient(object):
                 done = not part
         return str(buffer)
 
+    def create_header(self, method):
+
+        if self.parameters:
+            length = len(self.parameters)
+        else:
+            length = 0
+
+        header = ("%s %s HTTP/1.1\r\n" % (method, self.path))
+        header += ("Host: %s:%d \r\n" % (self.host, self.port))
+        header += ("User-Agent: Ubuntu VM \r\n")
+        
+        if method == 'POST':
+            header += ("Content-Type: application/x-www-form-urlencoded\r\n")
+            header += ("Content-Length: %d \r\n" % length)
+            
+        header += ("Connection: \"close\"\r\n\r\n")
+
+        return header
+
     def GET(self, url, args=None):
-        code = 500
-        body = ""
+
+        if args:
+            self.parameters = urllib.urlencode(args)
+        else:
+            self.parameters = "" 
+        
+
+        #Step one: verify URL:
+        self.parseURL(url)
+        self.connect()
+        
+        header = self.create_header("GET")
+        self.socket.sendall(header.encode("UTF8"))
+
+        if self.parameters:
+            self.socket.sendall("%s\r\n\r\n" % self.parameters)
+        
+        #get response
+        resp = self.recvall(self.socket)
+        
+        #grab info from response
+        code = self.get_code(resp)
+        body = self.get_body(resp)
+        self.socket.close()
+        
+        #connection = self.connect(url)
         return HTTPRequest(code, body)
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
+
+        if args:
+            self.parameters = urllib.urlencode(args)
+        else:
+            self.parameters = ""
+        
+        self.parseURL(url)
+        self.connect()
+        
+        header = self.create_header("POST")
+        self.socket.sendall(header.encode("UTF8"))
+
+        if self.parameters:
+            self.socket.sendall("%s\r\n\r\n" % self.parameters)
+
+        resp = self.recvall(self.socket)
+        code = self.get_code(resp)
+        body = self.get_body(resp)
+
+        self.socket.close()
+
         return HTTPRequest(code, body)
+
 
     def command(self, url, command="GET", args=None):
         if (command == "POST"):
             return self.POST( url, args )
         else:
             return self.GET( url, args )
+    
     
 if __name__ == "__main__":
     client = HTTPClient()
